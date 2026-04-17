@@ -1,86 +1,57 @@
--- Creating the Database
-CREATE database swiggy;
+SELECT * FROM fact_sales
+SELECT  MIN(tenure_days) FROM dim_customers
+SELECT * FROM dim_products_devices
+SELECT * FROM fact_finance
+UPDATE dim_customers
+SET customer_segment=CASE WHEN tenure_days < 100 THEN 'New'
+						   WHEN tenure_days >= 100 AND tenure_days <=150 THEN 'Returning'
+						   WHEN tenure_days > 150 THEN 'Loyal'
+						   ELSE 'unk' END;
 
-USE swiggy;
-DROP TABLE IF EXISTS swigg;
-CREATE table swigg (
-					          State VARCHAR(150),
-                    City VARCHAR(150),
-                    Order_Date DATE,
-                    Restaurant_Name VARCHAR(150), 
-                    Location VARCHAR(150),
-                    Category VARCHAR(150),
-                    Dish_Name VARCHAR(150),
-                    Price_INR DECIMAL (5,2) ,
-                    Rating DECIMAL (3,2),
-                    Rating_Count INT
-					);
-ALTER TABLE swigg
-MODIFY Price_INR DECIMAL (8,2);
-ALTER TABLE swigg
-MODIFY Dish_Name VARCHAR(300);
+ALTER TABLE dim_customers
+RENAME TO dim_customers
 
-TRUNCATE table Swigg;
+UPDATE fact_finance
+SET expected_payment_days =
+	CASE WHEN device_price > 30000 THEN 365 ELSE 545 END ;
+-- 1.a What is the conversion rate from application → approval → activation
+SELECT COUNT(*) AS total_application,
+				SUM(approved_flag) AS total_approved,
+				SUM(loan_activated) AS total_activations,
+			    ROUND( SUM(approved_flag)::numeric/COUNT(*),2) * 100 AS approval_rate,
+				ROUND(SUM(loan_activated)::numeric/NULLIF(SUM(approved_flag),0)*100,2) AS acctivation_rate,
+				ROUND(SUM(loan_activated)::numeric/COUNT(*) * 100,2) AS overall_conversation_rate
+				FROM fact_finance
+				
 
-LOAD DATA INFILE 'C:/ProgramData/MySQL/MySQL Server 8.0/Uploads/swiggy_data.csv'
-INTO TABLE swigg
-FIELDS TERMINATED BY ',' 
-ENCLOSED BY '"'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(State, City, Order_Date, Restaurant_Name, Location, Category, Dish_Name, Price_INR, Rating, Rating_Count);
-
-
-
--- DATA VALIDATION AND CLEANING
-
-SELECT * from swigg
-WHERE Location IS Null;
+--  b. Conversion by Brand
+SELECT device_brand, 
+	   COUNT(*) AS total_applications,
+	   SUM(approved_flag) AS total_approved,
+	   SUM(loan_activated) AS total_activated,
+	   ROUND(SUM(approved_flag) ::numeric/COUNT (*) * 100,2) AS approved_rate,
+	   ROUND(SUM(loan_activated) ::numeric/NULLIF(SUM(approved_flag),0) * 100,2) AS activation_rate,
+	   ROUND(SUM(loan_activated)/COUNT(*) * 100,2) AS overal_conversion
+	   FROM fact_finance
+	   GROUP BY device_brand
 
 SELECT 
-    SUM(CASE WHEN state IS NULL THEN 1 ELSE 0 END) AS null_state,
-    SUM( CASE WHEN location IS NULL THEN 1 ELSE 0 END) AS null_location,
-    SUM( CASE WHEN city IS NULL THEN 1 ELSE 0 END) AS null_city,
-    SUM( CASE WHEN rating IS NULL THEN 1 ELSE 0 END) AS null_rating
-    FROM swigg;
-    
--- Detect fields containing blank values that may cause inaccurate analysis.
-SELECT *
-FROM swigg
-WHERE state='' OR city ='' OR Restaurant_name='';
+    c.customer_segment,
+    COUNT(*) AS applications,
+    ROUND(SUM(f.approved_flag)::numeric / COUNT(*) * 100, 2) AS approval_rate,
+    ROUND(SUM(f.loan_activated)::numeric / COUNT(*) * 100, 2) AS conversion_rate
+FROM fact_finance f
+JOIN dim_customers c
+    ON f.customer_key = c.customer_key
+GROUP BY c.customer_segment;
 
 
--- Find duplicate rows using grouping on all business-critical columns.
-SELECT State ,City, Order_Date ,Restaurant_Name,Location ,Category,Dish_Name, Price_INR ,Rating ,Rating_Count, COUNT(*) AS CNT FROM swigg
-GROUP BY State ,City, Order_Date ,Restaurant_Name,Location ,Category,Dish_Name, Price_INR ,Rating ,Rating_Count
-HAVING COUNT(*)>1;
 
--- Delete Duplicates
--- WITH CTE AS (
--- 	SELECT *,row_number()
---     OVER(PARTITION BY State ,City, Order_Date ,Restaurant_Name,Location ,Category,Dish_Name, Price_INR ,Rating ,Rating_Count  ORDER BY (SELECT NULL))
---     AS rn
--- from swigg
-SET SQL_SAFE_UPDATES = 1;
-ALTER TABLE swigg
-ADD COLUMN row_id BIGINT AUTO_INCREMENT PRIMARY KEY;
-
--- DELETE FROM CTE WHERE rn>1
-DELETE FROM swigg
-WHERE row_id IN (SELECT row_id
-FROM (
-SELECT row_id, ROW_NUMBER() OVER (
-							PARTITION BY State ,City, Order_Date ,Restaurant_Name,Location ,Category,Dish_Name, Price_INR ,Rating ,Rating_Count 
-                            order by order_date ) AS rn
-from swigg
-)t
-WHERE rn>1);
-
--- Using CTE
-WITH missing_ratings AS (
-    SELECT *
-    FROM swigg
-    WHERE Rating IS NULL OR Rating_Count IS NULL
-)
-SELECT *
-FROM missing_ratings;
+SELECT 
+    device_tier,
+    COUNT(*) AS applications,
+    ROUND(SUM(approved_flag)::numeric / COUNT(*) * 100, 2) AS approval_rate,
+    ROUND(SUM(loan_activated)::numeric / COUNT(*) * 100, 2) AS conversion_rate
+FROM fact_finance
+GROUP BY device_tier
+ORDER BY device_tier;
